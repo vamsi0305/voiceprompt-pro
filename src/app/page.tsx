@@ -1,0 +1,413 @@
+"use client";
+
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import StatusIndicator from "./components/StatusIndicator";
+import ConversationChat from "./components/ConversationChat";
+import PromptOutput from "./components/PromptOutput";
+import VoiceRecorder from "./components/VoiceRecorder";
+import HistorySidebar from "./components/HistorySidebar";
+import LanguageSelector from "./components/LanguageSelector";
+import { SpeechManager } from "@/lib/speech";
+import { WakeWordDetector } from "@/lib/wake-word";
+import { TTSManager } from "@/lib/tts";
+import { ConversationManager, ChatMessage } from "@/lib/conversation";
+import { structurePrompt } from "@/lib/structurer";
+import { formatForAllLLMs, FormattedPrompt } from "@/lib/formatters";
+import { SavedPrompt, savePrompt, getAllPrompts, deletePrompt, searchPrompts } from "@/lib/storage";
+
+type AppStatus = "idle" | "wake-listening" | "listening" | "processing" | "speaking";
+
+export default function Home() {
+  // Core state
+  const [status, setStatus] = useState<AppStatus>("idle");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const [formattedPrompts, setFormattedPrompts] = useState<FormattedPrompt[]>([]);
+  const [qualityScore, setQualityScore] = useState(0);
+  const [currentLang, setCurrentLang] = useState("te-IN");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // History state
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Refs for managers (persist across renders)
+  const speechRef = useRef<SpeechManager | null>(null);
+  const wakeWordRef = useRef<WakeWordDetector | null>(null);
+  const ttsRef = useRef<TTSManager | null>(null);
+  const conversationRef = useRef<ConversationManager | null>(null);
+  const finalTranscriptRef = useRef("");
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Initialize managers
+  useEffect(() => {
+    speechRef.current = new SpeechManager();
+    wakeWordRef.current = new WakeWordDetector();
+    ttsRef.current = new TTSManager();
+    conversationRef.current = new ConversationManager();
+
+    // Load saved prompts
+    getAllPrompts().then(setSavedPrompts).catch(console.error);
+
+    // Auto-start wake word listener
+    startWakeWordListening();
+
+    return () => {
+      speechRef.current?.stop();
+      wakeWordRef.current?.stop();
+      ttsRef.current?.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Search prompts
+  useEffect(() => {
+    if (searchQuery) {
+      searchPrompts(searchQuery).then(setSavedPrompts).catch(console.error);
+    } else {
+      getAllPrompts().then(setSavedPrompts).catch(console.error);
+    }
+  }, [searchQuery]);
+
+  // Show toast
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 2500);
+  }, []);
+
+  // Start wake word listening
+  const startWakeWordListening = useCallback(() => {
+    setStatus("wake-listening");
+    wakeWordRef.current?.start(() => {
+      // Wake word detected!
+      wakeWordRef.current?.stop();
+      handleWakeUp();
+    });
+  }, []);
+
+  // Handle wake-up event
+  const handleWakeUp = useCallback(() => {
+    // Play a chime-like sound using Web Audio API
+    playChime();
+
+    setStatus("listening");
+    const conversation = conversationRef.current!;
+    const welcomeMsg = conversation.getWelcomeMessage();
+    const assistantMsg = conversation.addAssistantMessage(welcomeMsg);
+    setMessages((prev) => [...prev, assistantMsg]);
+
+    // Speak the welcome message
+    setStatus("speaking");
+    ttsRef.current?.speak(welcomeMsg, () => {
+      // After speaking, start listening
+      startListening();
+    });
+  }, []);
+
+  // Play a chime sound using Web Audio API
+  const playChime = useCallback(() => {
+    try {
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.4);
+    } catch {
+      // Silently fail if audio context is not available
+    }
+  }, []);
+
+  // Start active listening
+  const startListening = useCallback(() => {
+    if (!speechRef.current) return;
+    setStatus("listening");
+    finalTranscriptRef.current = "";
+    setInterimTranscript("");
+
+    speechRef.current.setLanguage(currentLang);
+    speechRef.current.setCallbacks(
+      (result) => {
+        if (result.isFinal) {
+          finalTranscriptRef.current += result.transcript + " ";
+          setInterimTranscript("");
+
+          // Reset silence timer
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = setTimeout(() => {
+            // After 3 seconds of silence, process the input
+            if (finalTranscriptRef.current.trim()) {
+              handleUserFinishedSpeaking();
+            }
+          }, 3000);
+        } else {
+          setInterimTranscript(result.transcript);
+        }
+      },
+      (speechStatus) => {
+        if (speechStatus === "error") {
+          showToast("Speech recognition error. Please try again.");
+        }
+      }
+    );
+
+    speechRef.current.start();
+  }, [currentLang, showToast]);
+
+  // Handle when user finishes speaking
+  const handleUserFinishedSpeaking = useCallback(() => {
+    speechRef.current?.stop();
+    setInterimTranscript("");
+
+    const transcript = finalTranscriptRef.current.trim();
+    if (!transcript) {
+      startWakeWordListening();
+      return;
+    }
+
+    setStatus("processing");
+
+    const conversation = conversationRef.current!;
+    const structured = structurePrompt(transcript);
+    const { response, shouldStructure } = conversation.processUserInput(
+      transcript,
+      structured.intent
+    );
+
+    // Update messages
+    setMessages([...conversation.getMessages()]);
+
+    if (shouldStructure) {
+      // Generate structured prompts
+      const combined = conversation.getCombinedTranscript();
+      const finalStructured = structurePrompt(combined);
+      const formatted = formatForAllLLMs(finalStructured);
+      setFormattedPrompts(formatted);
+      setQualityScore(finalStructured.qualityScore);
+
+      // Save to history
+      const saved: SavedPrompt = {
+        id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+        title: finalStructured.title,
+        rawTranscript: combined,
+        structuredPrompt: finalStructured.fullPrompt,
+        intent: finalStructured.intent,
+        qualityScore: finalStructured.qualityScore,
+        language: currentLang,
+        timestamp: Date.now(),
+      };
+      savePrompt(saved).then(() => {
+        getAllPrompts().then(setSavedPrompts).catch(console.error);
+      });
+
+      // Speak confirmation
+      setStatus("speaking");
+      ttsRef.current?.speak(response, () => {
+        setStatus("idle");
+        // Restart wake word listening
+        setTimeout(() => startWakeWordListening(), 1000);
+      });
+    } else {
+      // Need more info — speak the clarifying question
+      setStatus("speaking");
+      ttsRef.current?.speak(response, () => {
+        // After speaking question, listen for more input
+        startListening();
+      });
+    }
+  }, [currentLang, startWakeWordListening, startListening, showToast]);
+
+  // Toggle manual voice recording
+  const handleToggleVoice = useCallback(() => {
+    if (status === "listening") {
+      // Stop listening and process
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      handleUserFinishedSpeaking();
+    } else if (status === "idle" || status === "wake-listening") {
+      // Stop wake word listener and start manual listening
+      wakeWordRef.current?.stop();
+      handleWakeUp();
+    }
+  }, [status, handleUserFinishedSpeaking, handleWakeUp]);
+
+  // Copy to clipboard
+  const handleCopy = useCallback(
+    (text: string) => {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast("Copied to clipboard! 📋");
+      }).catch(() => {
+        showToast("Failed to copy");
+      });
+    },
+    [showToast]
+  );
+
+  // History actions
+  const handleSelectPrompt = useCallback((prompt: SavedPrompt) => {
+    const structured = structurePrompt(prompt.rawTranscript);
+    const formatted = formatForAllLLMs(structured);
+    setFormattedPrompts(formatted);
+    setQualityScore(structured.qualityScore);
+    setHistoryOpen(false);
+    showToast("Loaded prompt from history");
+  }, [showToast]);
+
+  const handleDeletePrompt = useCallback(
+    (id: string) => {
+      deletePrompt(id).then(() => {
+        getAllPrompts().then(setSavedPrompts).catch(console.error);
+        showToast("Prompt deleted");
+      });
+    },
+    [showToast]
+  );
+
+  // New conversation
+  const handleNewConversation = useCallback(() => {
+    conversationRef.current?.reset();
+    setMessages([]);
+    setFormattedPrompts([]);
+    setQualityScore(0);
+    setInterimTranscript("");
+    finalTranscriptRef.current = "";
+    speechRef.current?.stop();
+    ttsRef.current?.stop();
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    startWakeWordListening();
+  }, [startWakeWordListening]);
+
+  return (
+    <div className="relative min-h-screen flex flex-col z-10">
+      {/* Header */}
+      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)] backdrop-blur-md bg-[var(--bg-primary)]/80 sticky top-0 z-30">
+        <div className="flex items-center gap-3">
+          <div className="text-2xl">🎙️</div>
+          <div>
+            <h1 className="text-base font-bold text-[var(--text-primary)] tracking-tight">
+              VoicePrompt <span className="text-[var(--accent-purple)]">Pro</span>
+            </h1>
+            <p className="text-[10px] text-[var(--text-muted)]">
+              Voice → Structured LLM Prompts
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <LanguageSelector
+            currentLang={currentLang}
+            onLanguageChange={(lang) => {
+              setCurrentLang(lang);
+              speechRef.current?.setLanguage(lang);
+            }}
+          />
+          <button
+            onClick={handleNewConversation}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition-all"
+          >
+            ✨ New
+          </button>
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition-all"
+          >
+            📜 History
+          </button>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <main className="flex-1 flex flex-col lg:flex-row gap-6 p-6 max-w-7xl mx-auto w-full">
+        {/* Left panel — Conversation */}
+        <div className="flex-1 flex flex-col gap-4">
+          {/* Status */}
+          <div className="flex items-center justify-between">
+            <StatusIndicator status={status} />
+            <div className="flex items-center gap-2">
+              {status === "wake-listening" && (
+                <span className="text-[10px] text-[var(--text-muted)] animate-pulse">
+                  🔊 Always-on
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Chat area */}
+          <div className="glass-card flex-1 flex flex-col">
+            <div className="flex-1">
+              <ConversationChat
+                messages={messages}
+                isTyping={status === "processing"}
+                interimTranscript={interimTranscript}
+              />
+            </div>
+
+            {/* Voice controls */}
+            <div className="border-t border-[var(--border-color)] p-4 flex items-center justify-center">
+              <VoiceRecorder
+                isListening={status === "listening"}
+                isProcessing={status === "processing"}
+                onToggle={handleToggleVoice}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Right panel — Prompt output */}
+        <div className="lg:w-[480px] flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-[var(--text-primary)]">
+              📋 Structured Prompts
+            </h2>
+            {formattedPrompts.length > 0 && (
+              <button
+                onClick={() => handleCopy(formattedPrompts[0].formattedPrompt)}
+                className="text-[10px] text-[var(--accent-green)] hover:underline"
+              >
+                Copy active
+              </button>
+            )}
+          </div>
+
+          <PromptOutput
+            formattedPrompts={formattedPrompts}
+            qualityScore={qualityScore}
+            onCopy={handleCopy}
+          />
+
+          {/* Keyboard shortcut hint */}
+          <div className="text-center">
+            <p className="text-[10px] text-[var(--text-muted)]">
+              💡 Tip: Say <span className="text-[var(--accent-green)]">&quot;Hey Listen&quot;</span> anytime to start • Tap 🎤 for manual mode
+            </p>
+          </div>
+        </div>
+      </main>
+
+      {/* History sidebar */}
+      <HistorySidebar
+        isOpen={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        prompts={savedPrompts}
+        onSelect={handleSelectPrompt}
+        onDelete={handleDeletePrompt}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
+
+      {/* Toast notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 toast-enter">
+          <div className="glass-card-sm px-4 py-2.5 text-sm font-medium text-[var(--text-primary)] shadow-xl">
+            {toastMessage}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
