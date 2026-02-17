@@ -160,8 +160,8 @@ export default function Home() {
     speechRef.current.start();
   }, [currentLang, showToast]);
 
-  // Handle when user finishes speaking
-  const handleUserFinishedSpeaking = useCallback(() => {
+  // Handle when user finishes speaking — calls backend API routes
+  const handleUserFinishedSpeaking = useCallback(async () => {
     speechRef.current?.stop();
     setInterimTranscript("");
 
@@ -174,52 +174,120 @@ export default function Home() {
     setStatus("processing");
 
     const conversation = conversationRef.current!;
-    const structured = structurePrompt(transcript);
-    const { response, shouldStructure } = conversation.processUserInput(
-      transcript,
-      structured.intent
-    );
 
-    // Update messages
-    setMessages([...conversation.getMessages()]);
-
-    if (shouldStructure) {
-      // Generate structured prompts
-      const combined = conversation.getCombinedTranscript();
-      const finalStructured = structurePrompt(combined);
-      const formatted = formatForAllLLMs(finalStructured);
-      setFormattedPrompts(formatted);
-      setQualityScore(finalStructured.qualityScore);
-
-      // Save to history
-      const saved: SavedPrompt = {
-        id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-        title: finalStructured.title,
-        rawTranscript: combined,
-        structuredPrompt: finalStructured.fullPrompt,
-        intent: finalStructured.intent,
-        qualityScore: finalStructured.qualityScore,
-        language: currentLang,
-        timestamp: Date.now(),
-      };
-      savePrompt(saved).then(() => {
-        getAllPrompts().then(setSavedPrompts).catch(console.error);
+    try {
+      // Step 1: Call backend /api/converse to determine if intent is complete
+      const converseRes = await fetch("/api/converse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript,
+          conversationHistory: conversation.getMessages().map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
       });
+      const converseData = await converseRes.json();
 
-      // Speak confirmation
-      setStatus("speaking");
-      ttsRef.current?.speak(response, () => {
-        setStatus("idle");
-        // Restart wake word listening
-        setTimeout(() => startWakeWordListening(), 1000);
-      });
-    } else {
-      // Need more info — speak the clarifying question
-      setStatus("speaking");
-      ttsRef.current?.speak(response, () => {
-        // After speaking question, listen for more input
-        startListening();
-      });
+      // Add user message to conversation
+      conversation.addUserMessage(transcript);
+      const { response, shouldStructure } = converseData.data ||
+        conversation.processUserInput(transcript, structurePrompt(transcript).intent);
+
+      conversation.addAssistantMessage(response);
+      setMessages([...conversation.getMessages()]);
+
+      if (shouldStructure) {
+        // Step 2: Call backend /api/structure to structure the prompt
+        const combined = conversation.getCombinedTranscript();
+        const structRes = await fetch("/api/structure", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transcript: combined, language: currentLang }),
+        });
+        const structData = await structRes.json();
+        const structured = structData.data || structurePrompt(combined);
+
+        // Step 3: Call backend /api/format to get LLM-specific formats
+        const formatRes = await fetch("/api/format", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: structured }),
+        });
+        const formatData = await formatRes.json();
+        const formatted = formatData.data || formatForAllLLMs(structured);
+
+        setFormattedPrompts(formatted);
+        setQualityScore(structured.qualityScore);
+
+        // Save to history
+        const saved: SavedPrompt = {
+          id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+          title: structured.title,
+          rawTranscript: combined,
+          structuredPrompt: structured.fullPrompt,
+          intent: structured.intent,
+          qualityScore: structured.qualityScore,
+          language: currentLang,
+          timestamp: Date.now(),
+        };
+        savePrompt(saved).then(() => {
+          getAllPrompts().then(setSavedPrompts).catch(console.error);
+        });
+
+        // Speak confirmation
+        setStatus("speaking");
+        ttsRef.current?.speak(response, () => {
+          setStatus("idle");
+          setTimeout(() => startWakeWordListening(), 1000);
+        });
+      } else {
+        // Need more info — speak the clarifying question
+        setStatus("speaking");
+        ttsRef.current?.speak(response, () => {
+          startListening();
+        });
+      }
+    } catch {
+      // Fallback to client-side if backend fails
+      console.warn("Backend API failed, falling back to client-side processing");
+      const structured = structurePrompt(transcript);
+      const { response, shouldStructure } = conversation.processUserInput(transcript, structured.intent);
+      setMessages([...conversation.getMessages()]);
+
+      if (shouldStructure) {
+        const combined = conversation.getCombinedTranscript();
+        const finalStructured = structurePrompt(combined);
+        const formatted = formatForAllLLMs(finalStructured);
+        setFormattedPrompts(formatted);
+        setQualityScore(finalStructured.qualityScore);
+
+        const saved: SavedPrompt = {
+          id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+          title: finalStructured.title,
+          rawTranscript: combined,
+          structuredPrompt: finalStructured.fullPrompt,
+          intent: finalStructured.intent,
+          qualityScore: finalStructured.qualityScore,
+          language: currentLang,
+          timestamp: Date.now(),
+        };
+        savePrompt(saved).then(() => {
+          getAllPrompts().then(setSavedPrompts).catch(console.error);
+        });
+
+        setStatus("speaking");
+        ttsRef.current?.speak(response, () => {
+          setStatus("idle");
+          setTimeout(() => startWakeWordListening(), 1000);
+        });
+      } else {
+        setStatus("speaking");
+        ttsRef.current?.speak(response, () => {
+          startListening();
+        });
+      }
     }
   }, [currentLang, startWakeWordListening, startListening, showToast]);
 
