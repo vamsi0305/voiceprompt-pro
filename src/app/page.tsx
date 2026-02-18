@@ -7,6 +7,8 @@ import PromptOutput from "./components/PromptOutput";
 import VoiceRecorder from "./components/VoiceRecorder";
 import HistorySidebar from "./components/HistorySidebar";
 import LanguageSelector from "./components/LanguageSelector";
+import SettingsPanel, { useSettings } from "./components/SettingsPanel";
+import Logo from "./components/Logo";
 import { SpeechManager } from "@/lib/speech";
 import { WakeWordDetector } from "@/lib/wake-word";
 import { TTSManager } from "@/lib/tts";
@@ -27,6 +29,13 @@ export default function Home() {
   const [currentLang, setCurrentLang] = useState("te-IN");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Theme state
+  const [isDark, setIsDark] = useState(true);
+
+  // Settings state
+  const [settings, setSettings] = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   // History state
   const [historyOpen, setHistoryOpen] = useState(false);
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
@@ -40,8 +49,25 @@ export default function Home() {
   const finalTranscriptRef = useRef("");
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize managers
+  // Theme toggle
+  const toggleTheme = useCallback(() => {
+    setIsDark((prev) => {
+      const next = !prev;
+      document.documentElement.setAttribute("data-theme", next ? "dark" : "light");
+      localStorage.setItem("voiceprompt-theme", next ? "dark" : "light");
+      return next;
+    });
+  }, []);
+
+  // Initialize managers & theme
   useEffect(() => {
+    // Load saved theme
+    const savedTheme = localStorage.getItem("voiceprompt-theme");
+    if (savedTheme === "light") {
+      setIsDark(false);
+      document.documentElement.setAttribute("data-theme", "light");
+    }
+
     speechRef.current = new SpeechManager();
     wakeWordRef.current = new WakeWordDetector();
     ttsRef.current = new TTSManager();
@@ -355,7 +381,7 @@ export default function Home() {
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)] backdrop-blur-md bg-[var(--bg-primary)]/80 sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <div className="text-2xl">🎙️</div>
+          <Logo size={36} />
           <div>
             <h1 className="text-base font-bold text-[var(--text-primary)] tracking-tight">
               VoicePrompt <span className="text-[var(--accent-purple)]">Pro</span>
@@ -366,7 +392,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <LanguageSelector
             currentLang={currentLang}
             onLanguageChange={(lang) => {
@@ -377,14 +403,31 @@ export default function Home() {
           <button
             onClick={handleNewConversation}
             className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition-all"
+            title="New conversation"
           >
             ✨ New
           </button>
           <button
             onClick={() => setHistoryOpen(true)}
             className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition-all"
+            title="View history"
           >
             📜 History
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition-all"
+            title="Settings"
+          >
+            ⚙️
+          </button>
+          {/* Theme Toggle — Dark/Light */}
+          <button
+            onClick={toggleTheme}
+            className="w-9 h-9 rounded-full flex items-center justify-center text-lg bg-[var(--bg-card)] border border-[var(--border-color)] hover:bg-[var(--bg-card-hover)] transition-all hover:scale-110"
+            title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {isDark ? "☀️" : "🌙"}
           </button>
         </div>
       </header>
@@ -466,6 +509,14 @@ export default function Home() {
         onDelete={handleDeletePrompt}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+      />
+
+      {/* Settings panel */}
+      <SettingsPanel
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        settings={settings}
+        onSettingsChange={setSettings}
       />
 
       {/* Toast notification */}
