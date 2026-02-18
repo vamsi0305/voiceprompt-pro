@@ -91,8 +91,11 @@ export async function POST(request: NextRequest) {
 
         const { context, requirements = [], constraints = [], outputFormat = "Clear response", intent = "General" } = prompt;
 
-        // If API key, use AI to generate optimized formats
-        if (apiKey && apiKey.trim()) {
+        // Use provided key, or fall back to server env variable
+        const effectiveApiKey = apiKey?.trim() || process.env.OPENROUTER_API_KEY || "";
+
+        // If API key available, use AI to generate optimized formats
+        if (effectiveApiKey) {
             try {
                 const systemPrompt = `You are an expert prompt engineer. Given a structured prompt, create 5 optimized versions for different LLMs.
 
@@ -117,7 +120,7 @@ Make each prompt detailed and optimized for that specific LLM.`;
                 const userMsg = `Structured prompt to format:\n\nContext: ${context}\nRequirements: ${requirements.join(", ") || "None"}\nConstraints: ${constraints.join(", ") || "None"}\nOutput Format: ${outputFormat}\nIntent: ${intent}`;
 
                 const aiResponse = await callOpenRouter(
-                    apiKey,
+                    effectiveApiKey,
                     model || "deepseek/deepseek-chat-v3-0324:free",
                     [{ role: "system", content: systemPrompt }, { role: "user", content: userMsg }]
                 );

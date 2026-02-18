@@ -84,12 +84,15 @@ export async function POST(request: NextRequest) {
         const body: StructureRequest = await request.json();
         const { transcript, apiKey, model, language } = body;
 
+        // Use provided key, or fall back to server env variable
+        const effectiveApiKey = apiKey?.trim() || process.env.OPENROUTER_API_KEY || "";
+
         if (!transcript || transcript.trim().length === 0) {
             return NextResponse.json({ error: "Transcript is required" }, { status: 400 });
         }
 
-        // If API key provided, use OpenRouter AI to structure the prompt
-        if (apiKey && apiKey.trim()) {
+        // If API key available, use OpenRouter AI to structure the prompt
+        if (effectiveApiKey) {
             try {
                 const langHint = language && !language.startsWith("en")
                     ? `The user's input may be in a non-English language (${language}). Translate and understand it, then create the structured prompt in English.`
@@ -115,7 +118,7 @@ Make the fullPrompt detailed with ## sections for Task, Requirements, Constraint
 qualityScore should be 0-100 based on how clear and complete the request is.`;
 
                 const aiResponse = await callOpenRouter(
-                    apiKey,
+                    effectiveApiKey,
                     model || "deepseek/deepseek-chat-v3-0324:free",
                     [
                         { role: "system", content: systemPrompt },

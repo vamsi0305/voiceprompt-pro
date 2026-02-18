@@ -104,12 +104,15 @@ export async function POST(request: NextRequest) {
         const body: ConverseRequest = await request.json();
         const { transcript, conversationHistory = [], apiKey, model, language } = body;
 
+        // Use provided key, or fall back to server env variable
+        const effectiveApiKey = apiKey?.trim() || process.env.OPENROUTER_API_KEY || "";
+
         if (!transcript || transcript.trim().length === 0) {
             return NextResponse.json({ error: "Transcript is required" }, { status: 400 });
         }
 
-        // If API key provided, use OpenRouter AI
-        if (apiKey && apiKey.trim()) {
+        // If API key available, use OpenRouter AI
+        if (effectiveApiKey) {
             try {
                 const langHint = language && language.startsWith("te") ? "The user is speaking in Telugu. Respond in English." : "";
 
@@ -129,7 +132,7 @@ If the request is vague or short, ask ONE specific clarifying question.`;
                     { role: "user", content: transcript },
                 ];
 
-                const aiResponse = await callOpenRouter(apiKey, model || "deepseek/deepseek-chat-v3-0324:free", messages);
+                const aiResponse = await callOpenRouter(effectiveApiKey, model || "deepseek/deepseek-chat-v3-0324:free", messages);
                 const aiText = aiResponse.choices?.[0]?.message?.content || "";
 
                 const shouldStructure = aiText.includes("READY_TO_STRUCTURE") || conversationHistory.length >= 4;

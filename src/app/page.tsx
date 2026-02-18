@@ -355,15 +355,31 @@ export default function Home() {
   // Toggle manual voice recording
   const handleToggleVoice = useCallback(() => {
     if (status === "listening") {
-      // Stop listening and process
+      // Stop listening and process — capture any interim transcript too
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      handleUserFinishedSpeaking();
+
+      // If there's interim text that hasn't been finalized, add it
+      if (interimTranscript && interimTranscript.trim()) {
+        finalTranscriptRef.current += interimTranscript.trim() + " ";
+        setInterimTranscript("");
+      }
+
+      // If we have ANY text, process it
+      if (finalTranscriptRef.current.trim()) {
+        handleUserFinishedSpeaking();
+      } else {
+        // Nothing was said
+        speechRef.current?.stop();
+        showToast("No speech detected. Try again.");
+        setStatus("idle");
+        setTimeout(() => startWakeWordListening(), 500);
+      }
     } else if (status === "idle" || status === "wake-listening") {
       // Stop wake word listener and start manual listening
       wakeWordRef.current?.stop();
       handleWakeUp();
     }
-  }, [status, handleUserFinishedSpeaking, handleWakeUp]);
+  }, [status, interimTranscript, handleUserFinishedSpeaking, handleWakeUp, showToast, startWakeWordListening]);
 
   // Copy to clipboard
   const handleCopy = useCallback(
