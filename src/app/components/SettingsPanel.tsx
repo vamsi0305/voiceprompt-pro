@@ -15,6 +15,8 @@ export interface AppSettings {
     theme: "dark" | "purple" | "midnight"; // color theme
     autoSaveHistory: boolean;     // auto save to history
     maxHistoryItems: number;      // max prompts in history
+    openRouterApiKey: string;     // OpenRouter API key for AI features
+    aiModel: string;              // AI model to use
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -30,7 +32,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
     theme: "dark",
     autoSaveHistory: true,
     maxHistoryItems: 50,
+    openRouterApiKey: "",
+    aiModel: "deepseek/deepseek-chat-v3-0324:free",
 };
+
+export const FREE_AI_MODELS = [
+    { id: "deepseek/deepseek-chat-v3-0324:free", name: "DeepSeek V3 (Best for chat)" },
+    { id: "deepseek/deepseek-r1-zero:free", name: "DeepSeek R1 (Reasoning)" },
+    { id: "meta-llama/llama-4-maverick:free", name: "Llama 4 Maverick (GPT-4 level)" },
+    { id: "meta-llama/llama-4-scout:free", name: "Llama 4 Scout (Long context)" },
+    { id: "mistralai/mistral-small-3.1-24b-instruct:free", name: "Mistral Small 3.1" },
+    { id: "nvidia/llama-3.1-nemotron-nano-8b-v1:free", name: "NVIDIA Nemotron" },
+    { id: "nousresearch/deephermes-3-llama-3-8b-preview:free", name: "DeepHermes 3" },
+];
 
 interface SettingsPanelProps {
     isOpen: boolean;
@@ -124,6 +138,47 @@ export default function SettingsPanel({
 
                     {/* Settings Content */}
                     <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+                        {/* AI Integration */}
+                        <section>
+                            <h3 className="text-xs font-semibold text-[var(--accent-green)] uppercase tracking-wider mb-3">
+                                🤖 AI Integration (Free)
+                            </h3>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="text-xs font-medium text-[var(--text-primary)] block mb-1">OpenRouter API Key</label>
+                                    <input
+                                        type="password"
+                                        value={settings.openRouterApiKey}
+                                        onChange={(e) => update({ openRouterApiKey: e.target.value })}
+                                        className="w-full px-3 py-2 rounded-lg text-xs bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-purple)] transition-colors"
+                                        placeholder="sk-or-v1-..."
+                                    />
+                                    <p className="text-[10px] text-[var(--text-muted)] mt-1">
+                                        Free key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" className="text-[var(--accent-purple)] underline">openrouter.ai/keys</a> — no credit card needed
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-medium text-[var(--text-primary)] block mb-1">AI Model</label>
+                                    <select
+                                        value={settings.aiModel}
+                                        onChange={(e) => update({ aiModel: e.target.value })}
+                                        className="w-full px-3 py-2 rounded-lg text-xs bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-purple)] transition-colors"
+                                    >
+                                        {FREE_AI_MODELS.map((m) => (
+                                            <option key={m.id} value={m.id}>{m.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                {settings.openRouterApiKey ? (
+                                    <div className="text-[10px] text-[var(--accent-green)] flex items-center gap-1">✅ AI enabled — Telugu & all languages supported</div>
+                                ) : (
+                                    <div className="text-[10px] text-[var(--accent-orange)] flex items-center gap-1">⚠️ Add API key to enable AI-powered prompts (supports Telugu)</div>
+                                )}
+                            </div>
+                        </section>
+
+                        <hr className="border-[var(--border-color)]" />
 
                         {/* Voice Recognition */}
                         <section>

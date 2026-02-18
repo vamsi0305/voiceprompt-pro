@@ -161,6 +161,29 @@ export default function Home() {
     speechRef.current.setCallbacks(
       (result) => {
         if (result.isFinal) {
+          const text = result.transcript.trim();
+
+          // Check for stop words: "over", "done", "stop" (English) or "చాలు", "ఆపు" (Telugu)
+          const stopWords = ["over", "done", "stop", "that's it", "that is it", "చాలు", "ఆపు", "అయిపోయింది", "బస్"];
+          const lastWord = text.toLowerCase().trim();
+          const hasStopWord = stopWords.some(sw => lastWord.endsWith(sw) || lastWord === sw);
+
+          if (hasStopWord) {
+            // Remove the stop word from transcript
+            let cleanText = text;
+            for (const sw of stopWords) {
+              const regex = new RegExp(`\\s*${sw}\\s*$`, "i");
+              cleanText = cleanText.replace(regex, "");
+            }
+            if (cleanText.trim()) {
+              finalTranscriptRef.current += cleanText + " ";
+            }
+            // Immediately process
+            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+            handleUserFinishedSpeaking();
+            return;
+          }
+
           finalTranscriptRef.current += result.transcript + " ";
           setInterimTranscript("");
 
@@ -212,6 +235,9 @@ export default function Home() {
             role: m.role,
             content: m.content,
           })),
+          apiKey: settings.openRouterApiKey,
+          model: settings.aiModel,
+          language: currentLang,
         }),
       });
       const converseData = await converseRes.json();
@@ -230,7 +256,12 @@ export default function Home() {
         const structRes = await fetch("/api/structure", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transcript: combined, language: currentLang }),
+          body: JSON.stringify({
+            transcript: combined,
+            language: currentLang,
+            apiKey: settings.openRouterApiKey,
+            model: settings.aiModel,
+          }),
         });
         const structData = await structRes.json();
         const structured = structData.data || structurePrompt(combined);
@@ -239,7 +270,11 @@ export default function Home() {
         const formatRes = await fetch("/api/format", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: structured }),
+          body: JSON.stringify({
+            prompt: structured,
+            apiKey: settings.openRouterApiKey,
+            model: settings.aiModel,
+          }),
         });
         const formatData = await formatRes.json();
         const formatted = formatData.data || formatForAllLLMs(structured);
