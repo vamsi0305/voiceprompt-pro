@@ -226,7 +226,7 @@ export default function Home() {
 
     try {
       // Step 1: Call backend /api/converse to determine if intent is complete
-      const converseRes = await fetch("/api/converse", {
+      const converseRes = await fetch("http://localhost:8000/api/converse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -253,7 +253,7 @@ export default function Home() {
       if (shouldStructure) {
         // Step 2: Call backend /api/structure to structure the prompt
         const combined = conversation.getCombinedTranscript();
-        const structRes = await fetch("/api/structure", {
+        const structRes = await fetch("http://localhost:8000/api/structure", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -267,7 +267,7 @@ export default function Home() {
         const structured = structData.data || structurePrompt(combined);
 
         // Step 3: Call backend /api/format to get LLM-specific formats
-        const formatRes = await fetch("/api/format", {
+        const formatRes = await fetch("http://localhost:8000/api/format", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
